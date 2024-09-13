@@ -13,6 +13,8 @@ from gym.utils import seeding
 import json
 import os
 import pandas as pd
+import socket
+import pickle
 
 
 class OpenFieldEnv(gym.Env):
@@ -61,17 +63,28 @@ class OpenFieldEnv(gym.Env):
         self.f_tr_time_rew = open(os.path.join(self.data_path, 'trial_time_rew.dat'), 'w')
         self.f_tr_time_rew.write('trial\ttime\treward\n')
         
+        self.host = socket.gethostname()
+        self.port = 41111
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.socket.settimeout(5)
+        try:
+            self.socket.connect((self.host, self.port))
+            self.connected = True
+        except socket.error as e:
+            print(f"[CONNECTION NOT POSSIBLE] {e}")
+            self.connected = False
+            
         
-
     def read_trials_params(self):
-        with open('sim_params.json', 'r') as fl:
+        with open('parameter_sets/current_parameter/sim_params.json', 'r') as fl:
             sim_dict = json.load(fl)
 
         data_dir = sim_dict['data_path']
         master_rng_seed = str(sim_dict['master_rng_seed'])
         main_data_dir = os.path.join(*data_dir.split('/')[0:-1])
         fig_dir = os.path.join(main_data_dir, 'fig-' + master_rng_seed)
-        fl_name = 'trials_params.dat'
+        fl_name = 'parameter_sets/current_parameter/trials_params.dat'
 #        self.trials_params = pd.read_csv(os.path.join(fig_dir,fl_name),sep = "\t")
         self.trials_params = pd.read_csv(fl_name,sep = "\t")
         
@@ -168,6 +181,14 @@ class OpenFieldEnv(gym.Env):
 
 
         self.f_tr_loc.write('{:d}\t{:.5f}\t{:.5f}\t{:.5f}\n'.format(self.crnt_trial_num, runtime, position[0], position[1]))
+        
+        if self.connected:
+            serialized_data = pickle.dumps((self.crnt_trial_num, runtime, position[0], position[1]))
+            try:
+                self.socket.send(serialized_data)
+            except BrokenPipeError:
+                self.socket.close()
+                self.connected = False
 
         crnt_trial_time = runtime - self.prev_tr_end
         
@@ -308,9 +329,9 @@ class OpenFieldEnv(gym.Env):
             self.viewer = None
 
     def _read_json_p(self):
-        with open('sim_params.json', 'r') as f:
+        with open('parameter_sets/current_parameter/sim_params.json', 'r') as f:
             sim_dict = json.load(f)
-        with open('env_params.json', 'r') as f:
+        with open('parameter_sets/current_parameter/env_params.json', 'r') as f:
             env_dict = json.load(f)
         simtime = sim_dict['simtime'] * 1000
         dt = sim_dict['dt']
